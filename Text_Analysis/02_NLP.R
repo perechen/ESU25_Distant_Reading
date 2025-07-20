@@ -1,6 +1,6 @@
 ### Natural Language Processing with R
 
-# This is an R script file, created by Simone
+# This is an R script file, adjusted by Artjoms from Simone
 # Everything written after an hashtag is a comment
 # Everything else is R code
 # To activate the code, place the cursor on the corresponding line
@@ -9,12 +9,20 @@
 # (the command will be automatically copy/pasted into the console)
 
 # before everything starts: check the working directory!
+# you can do it by running `getwd()` command
 # (it should be YOUR_COMPUTER/*/Distant_Reading_in_R/)
 
-# required packages:
+# required packages, part I
+
 # install.packages("udpipe")
 # install.packages("tidyverse")
 # install.packages("word2vec")
+
+#  required packages, part II
+
+# install.packages("Rtsne")
+# install.packages("dbscan")
+# install.packages("plotly")
 
 # you can also install them by using the yellow warning above
 # (...if it appears)
@@ -23,7 +31,7 @@
 ### Let's use an NLP library
 ### (examples adapted from: https://bnosac.github.io/udpipe/en/)
 
-# load the library
+# load libraries
 library(udpipe)
 library(tidyverse)
 
@@ -45,91 +53,131 @@ View(x)
 
 ### let's work on one entire novel
 
-# read the novel
-my_text <- readLines("corpus/Doyle_Study_1887.txt", warn = F)
-head(my_text)
+# read the novel (read_file() from tidyverse)
+my_text <- read_file("corpus/Doyle_Study_1887.txt")
 
-# collapse to a single string (separated by newlines) 
-my_text <-  paste(my_text, collapse = "\n\n")
+# check the first 1000 characters
+substr(my_text,start = 1,stop = 1000)
 
 # analyze with Udpipe
-result <- udpipe(x = my_text, object = "english")
+doyle <- udpipe(x = my_text, object = "english")
 
-### Dispersion plots (example taken from Matthew Jockers, Text analysis with R for students of literature, 2014)
+### Dispersion plots (example taken from Matthew Jockers, Text analysis with R for students of literature, 2014; adapted for tidyverse & ggplot)
 
 # first, let's find the appearances of a certain word in the text
-sherlock.v <- which(result$lemma== "Sherlock")
-sherlock.v
+sherlock_v1 <- doyle %>% 
+  as_tibble() %>%  # 'upgrade' to tibble
+  mutate(key=ifelse(lemma=="Sherlock", yes=1, no=0)) %>% # check the lemma column for key, mark it 1 or 0
+  select(key) # select the new 'key' column
 
-# second, let's create a vector that represents the entire text
-w.count.v <- rep(NA, length(result$lemma))
-w.count.v
+sherlock_v2 <- sherlock_v1 %>%
+  mutate(position=row_number())  %>% # numerate the rows == word positions in the story
+  filter(key==1) # filter only matches
 
-# ...and add the appearences in the vector
-w.count.v[sherlock.v] <- 1
-w.count.v[1000:1060]
+sherlock_v2
 
-plot(w.count.v, main="Dispersion Plot of 'Sherlock' in A study in Scarlet",
-     xlab="Novel Time", ylab="Sherlock", type= "h" , ylim=c(0,1), yaxt= "n")
+ggplot(sherlock_v2,aes(position, key)) +  # set mapping
+  geom_col(width = 150,position = "identity") + # column geometry
+  theme_minimal() + # just theme
+  xlim(0,nrow(doyle)) + # limit x axis to full size of the novel
+  theme(axis.text.y=element_blank()) +  # remove Y-axis text for aesthetic pleasure
+  labs(x="Novel time (tokens)", y=NULL, title="Dispersion Plot of 'Sherlock' in A study in Scarlet")
+
+
+### YOUR TURN
+
+# let's practice plotting and getting information from texts
+# 1. get occurrences of another keyword, "Lucy" 
+# 2. plot it 
+# 
+# 2* plot it together with "Sherlock"?
+# 3. color the bars by the keyword?
+
+
+### END OF YOUR TURN
+
 
 ### Keyword in context
-cat(result$token[(sherlock.v[1]-5):(sherlock.v[1]+5)])
+match <- sherlock_v2$position[1] # take the first time the word "Sherlock" occurs 
+window <- 5 # how many tokens in the left and right context
 
-# put it in a loop
-for(i in 1:length(sherlock.v)){
+kwic <- doyle$token[(match-window):(match+window)] # takes only tokens in a window from the position of a match
+kwic
+
+cat(match, "\t", kwic)
+
+### put it in a loop
+
+for(match in sherlock_v2$position){
   
-  cat(i, "\t", result$token[(sherlock.v[i]-5):(sherlock.v[i]+5)], "\n")
+  cat(match, "\t", doyle$token[(match-window):(match+window)], "\n")
   
 }
 
 ### Better keyword in context (per sentence)
 
 # find sentence id
-my_sent_id <- result$sentence_id[sherlock.v[1]]
+
+my_sent_id <- doyle$sentence_id[sherlock_v2$position]
 my_sent_id
 
-# find rows in dataframe with matching sentence id
-which(result$sentence_id == my_sent_id)
 
 # print just the first
-result$sentence[result$sentence_id == my_sent_id][1]
+first_sentence <- doyle %>%
+  filter(sentence_id == my_sent_id[1]) %>%  # filter the first sentence
+  pull(token) # pull command "pulls" a column from a data frame and takes it as a vector
+
+
+cat(first_sentence) 
 
 # put all in a loop
-for(i in 1:length(sherlock.v)){
+for(match in my_sent_id){
   
-  my_sent_id <- result$sentence_id[sherlock.v[i]]
+  sentence <- doyle %>% filter(sentence_id==match) %>% pull(token)
   
-  cat(i, "\t", result$sentence[result$sentence_id == my_sent_id][1], "\n")
+  cat(match, "\t", sentence, "\n")
   
 }
 
 ### Overall stats per part of speech
 
 # calculate frequencies of "upos"
-stats <- txt_freq(result$upos)
+stats <- txt_freq(doyle$upos)
 
-# convert to factor (to simplify visualization)
-stats$key <- factor(stats$key, 
-                    levels = stats$key)
 
-# plot result using ggplot (from tidyverse)
-ggplot(data = stats, mapping = aes(x = key, y = freq)) +
-  geom_bar(stat = "identity", fill = "cadetblue") +
+# plot result using ggplot
+ggplot(stats, mapping = aes(x = key, y = freq)) +
+  geom_col(fill = "cadetblue") +
   labs(title = "UPOS (Universal Parts of Speech)\nfrequency of occurrence")
+
+## not very nice looking , isn't it? 
+## few ways to rearrange 
+
+# 1. convert to factor (factors are a special way to deal with categorical data, e.g. strings)
+stats <- stats %>% mutate(key2=factor(key,levels=key))
+
+ggplot(stats, mapping = aes(x = key2, y = freq)) +
+  geom_col(fill = "cadetblue") +
+  labs(title = "UPOS (Universal Parts of Speech)\nfrequency of occurrence", x=NULL)
+
+
+# 2. use reorder() by frequency
+
+ggplot(stats, mapping = aes(x = reorder(key, -freq), y = freq)) +
+  geom_col(fill = "cadetblue") +
+  labs(title = "UPOS (Universal Parts of Speech)\nfrequency of occurrence",x=NULL)
+
 
 ### NOUNS
 # same procedure as above, but preselecting just nouns
-stats <- subset(result, 
-                upos %in% c("NOUN")) 
+noun_df <- doyle %>% filter(upos=="NOUN")
 
-stats <- txt_freq(stats$token)
+stats <- txt_freq(noun_df$token)
 
-stats$key <- factor(stats$key, 
-                    levels = stats$key)
-
-ggplot(data = stats[1:20,], mapping = aes(x = key, y = freq)) +
+ggplot(data = stats[1:20,], mapping = aes(x = reorder(key, -freq), y = freq)) +
   geom_bar(stat = "identity", fill = "cadetblue") +
-  labs(title = "Most occurring nouns")
+  theme(axis.text.x = element_text(angle = 45,vjust = 0.6)) +
+  labs(title = "Most occurring nouns",x=NULL)
 
 
 ### Your Turn (1) - start
@@ -160,18 +208,19 @@ all_text_files
 all_texts <- lapply(all_text_files, readLines)
 
 # unlist and convert to lowercase
+all_texts <- all_texts %>% unlist() %>% tolower()
 all_texts <- tolower(unlist(all_texts))
 head(all_texts)
 
 # now we can train our model (it will take a bit)
-model <- word2vec(x = all_texts, type = "cbow", dim = 15, iter = 20)
+model <- word2vec(x = all_texts, type = "cbow", dim = 50, iter = 20)
 
 # we can see the embeddings
 embedding <- as.matrix(model)
 View(embedding)
 
 # find closest words
-lookslike <- predict(model, "man", type = "nearest", top_n = 10)
+lookslike <- predict(model, "forest", type = "nearest", top_n = 10)
 lookslike
 
 ### Your Turn (2) - start
@@ -183,6 +232,41 @@ lookslike
 
 
 ### Your Turn (2) - end
+
+
+### Let's visualize the whole embedding space! 
+
+# Example dimensionality reduction with t-SNE
+library(Rtsne)
+library(dbscan)
+library(plotly)
+
+set.seed(1989) # fix random seed for reproducibility
+tsne <- Rtsne(embedding, dims = 2, perplexity = 30)
+
+# Create a data frame for plotting
+tsne_df <- tibble(
+  X = tsne$Y[, 1],
+  Y = tsne$Y[, 2],
+  label = rownames(embedding)
+)
+
+## HDBscan to map "dense" regions 
+hdb <- hdbscan(tsne$Y, minPts = 10)
+## Add cluster info to main table
+tsne_df <- tsne_df %>% mutate(cluster=hdb$cluster)
+
+
+# Interactive plot with `plotly` package
+plot_ly(tsne_df, # data frame
+        x = ~X,  # which column to X-axis
+        y = ~Y,  # which to Y
+        type = 'scatter', # visualization type
+        color=~cluster,  # color by `cluster` column
+        mode = 'markers', 
+        text = ~paste(label, "<br>cluster:", cluster), # define  a text string associated with with each point 
+        hoverinfo = 'text') # hover from 'text' parameter
+
 
 
 ### Appendix. Pretrained models
